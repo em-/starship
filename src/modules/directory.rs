@@ -102,8 +102,24 @@ pub fn module<'a>(context: &'a Context) -> Option<Module<'a>> {
     let path_vec = match &repo.and_then(|r| r.workdir.as_ref()) {
         Some(repo_root) if config.repo_root_style.is_some() => {
             let contracted_path = contract_repo_path(display_dir, repo_root)?;
-            let repo_path_vec: Vec<&str> = contracted_path.split('/').collect();
+            let contracted_path = if repo_root == &&real_path(&home_dir) {
+                match contracted_path.split_once('/') {
+                    Some((_, after)) => format!("{}/{}", home_symbol, after),
+                    _ => home_symbol.clone()
+                }
+            } else {
+                contracted_path
+            };
+            let mut repo_path_vec: Vec<&str> = contracted_path.split('/').collect();
             let after_repo_root = contracted_path.replacen(repo_path_vec[0], "", 1);
+            let contracted_path = if repo_root == &&home_dir {
+                contracted_path.replacen(repo_path_vec[0], home_symbol.as_str(), 1)
+            } else {
+                contracted_path.clone()
+            };
+            if repo_root == &&home_dir {
+                repo_path_vec[0] = home_symbol.as_str();
+            }
             let num_segments_after_root = after_repo_root.split('/').count();
 
             if ((num_segments_after_root - 1) as i64) < config.truncation_length {
@@ -1637,6 +1653,34 @@ mod tests {
             Color::Cyan.bold().prefix(),
             Color::Red.prefix(),
             Color::Cyan.paint(convert_path_sep("/src/sub/path"))
+        ));
+        assert_eq!(expected, actual);
+        tmp_dir.close()
+    }
+
+    #[test]
+    fn highlight_git_root_home_subdir() -> io::Result<()> {
+        let (tmp_dir, _) = make_known_tempdir(home_dir().unwrap().as_path())?;
+        let repo_dir = tmp_dir.path();
+        let dir = repo_dir.join(".config");
+        fs::create_dir_all(&dir)?;
+        init_repo(&repo_dir).unwrap();
+
+        let actual = ModuleRenderer::new("directory")
+            .env("HOME", tmp_dir.path().to_str().unwrap())
+            .config(toml::toml! {
+                [directory]
+                truncate_to_repo = false
+                truncation_length = 5
+                repo_root_style = "bold red"
+            })
+            .path(dir)
+            .collect();
+        let expected = Some(format!(
+            "{}{}~{} ",
+            Color::Cyan.bold().prefix(),
+            Color::Red.prefix(),
+            Color::Cyan.paint(convert_path_sep("/.config"))
         ));
         assert_eq!(expected, actual);
         tmp_dir.close()
